@@ -11,9 +11,14 @@ enum CandyState {
   CANCEL = 5,
   CANCELED = 6,
 }
+enum Direction {
+  UP,
+  DOWN,
+  LEFT,
+  RIGHT,
+}
 
 type CandyData = { state: CandyState; type: string; ins: cc.Node };
-// type CandyName = 'Candy_01' | 'Candy_02' | 'Candy_03' | 'Candy_04' | 'Candy_05' | 'Candy_06'
 
 @ccclass('GameManager')
 export class GameManager extends cc.Component {
@@ -26,12 +31,14 @@ export class GameManager extends cc.Component {
   @property({ type: [cc.Prefab] })
   candyPrefabs: cc.Prefab[] = [];
 
-  private _boardWidth = Constants.BOARD_COL * Constants.CANDY_WIDTH;
-  private _boardHeight = Constants.BOARD_ROW * Constants.CANDY_HEIGHT;
+  private _boardWidth = 0;
+  private _boardHeight = 0;
+  private _candySize = 0;
   private _candyData: CandyData[][] = [];
   private _candyNameToPrefabMap: Record<string, cc.Prefab> = {};
   private _candyTypes: string[] = [];
-  private _isSwitching = false;
+  private _isTouching = false;
+  private _isChecking = false;
   private _touchLocation = new cc.Vec2(0, 0);
   private _targetCandyRC: cc.Vec2 | null = null;
 
@@ -48,6 +55,9 @@ export class GameManager extends cc.Component {
   }
 
   private _initGameData() {
+    this._boardWidth = this.board.getComponent(cc.UITransform).contentSize.width;
+    this._candySize = this._boardWidth / Constants.BOARD_COL;
+    this._boardHeight = this._candySize * Constants.BOARD_ROW;
     this._candyTypes = this.candyPrefabs.map(p => {
       this._candyNameToPrefabMap[p.name] = p;
       return p.name;
@@ -65,10 +75,12 @@ export class GameManager extends cc.Component {
     this._candyData.forEach((row, rowIndex) =>
       row.forEach((candy, colIndex) => {
         const ins = cc.instantiate(this._candyNameToPrefabMap[candy.type]);
+        const ui = ins.getComponent(cc.UITransform);
+        ui.contentSize = new cc.Size(this._candySize, this._candySize);
         candy.ins = ins;
         ins.position = new cc.Vec3(
-          -this._boardWidth / 2 + Constants.CANDY_WIDTH / 2 + rowIndex * Constants.CANDY_WIDTH,
-          -this._boardHeight / 2 + Constants.CANDY_HEIGHT / 2 + colIndex * Constants.CANDY_HEIGHT,
+          -this._boardWidth / 2 + this._candySize / 2 + colIndex * this._candySize,
+          this._boardHeight / 2 - this._candySize / 2 - rowIndex * this._candySize,
           0
         );
         this.board.addChild(ins);
@@ -89,13 +101,16 @@ export class GameManager extends cc.Component {
   }
 
   private _touchStart(event: cc.EventTouch) {
-    event.getLocation(this._touchLocation);
+    event.getUILocation(this._touchLocation);
     for (let row = 0; row < Constants.BOARD_ROW; row++) {
       for (let col = 0; col < Constants.BOARD_COL; col++) {
-        if (this._getCandy(row, col).ins.getComponent(cc.UITransform).getBoundingBoxToWorld().contains(this._touchLocation)) {
-          this._isSwitching = true;
+        const candy = this._getCandy(row, col);
+        if (candy.ins.getComponent(cc.UITransform).getBoundingBoxToWorld().contains(this._touchLocation)) {
+          this._isTouching = true;
+          this._targetCandyRC = new cc.Vec2(0, 0);
           this._targetCandyRC.x = row;
           this._targetCandyRC.y = col;
+          candy.ins.scale = new cc.Vec3(1.2, 1.2, 0);
           break;
         }
       }
@@ -103,10 +118,23 @@ export class GameManager extends cc.Component {
   }
 
   private _touchMove(event: cc.EventTouch) {
-    if (!this._isSwitching) return;
+    if (!this._isTouching) return;
+    const startLocation = event.getStartLocation();
+    const currLocation = event.getLocation();
+    const distance = cc.Vec2.distance(startLocation, currLocation);
+    if (distance > Constants.MIN_TOUCH_MOVE_DISTANCE && !this._isChecking) {
+      this._isChecking = true;
+      const direction = this._getTouchDirection(startLocation, currLocation);
+    }
   }
 
-  private _touchEnd(event: cc.EventTouch) {}
+  private _touchEnd(event: cc.EventTouch) {
+    this._isTouching = false;
+  }
+
+  private _exchangeCandy(candy1: cc.Vec2, candy2: cc.Vec2) {}
+
+  private _exchangeCandyByDirection(candy: cc.Vec2, direction: Direction) {}
 
   private _randomGenerateCandyType(row: number, col: number): string {
     const canUseTypes = this._candyTypes.filter(type => {
@@ -127,5 +155,17 @@ export class GameManager extends cc.Component {
 
   private _getCandy(row: number, col: number): CandyData {
     return this._candyData[row][col];
+  }
+
+  private _getTouchDirection(start: cc.Vec2, end: cc.Vec2): Direction {
+    const deltaX = cc.bits.abs(start.x - end.x);
+    const deltaY = cc.bits.abs(start.y - end.y);
+    if (deltaX > deltaY) {
+      if (end.x > start.x) return Direction.RIGHT;
+      else return Direction.LEFT;
+    } else {
+      if (end.y > start.y) return Direction.UP;
+      else return Direction.DOWN;
+    }
   }
 }
