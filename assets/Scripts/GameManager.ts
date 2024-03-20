@@ -110,7 +110,7 @@ export class GameManager extends cc.Component {
           this._targetCandyRC = new cc.Vec2(0, 0);
           this._targetCandyRC.x = row;
           this._targetCandyRC.y = col;
-          candy.ins.scale = new cc.Vec3(1.2, 1.2, 0);
+          cc.tween(candy.ins).to(.3, { scale: new cc.Vec3(1.2, 1.2, 0) }, { easing: cc.easing.backInOut }).start();
           break;
         }
       }
