@@ -2,14 +2,12 @@ import * as cc from 'cc';
 import * as Constants from './Constants';
 
 const { ccclass, property } = cc._decorator;
+const EXPLOSION_ANIMATION_NAME_PREFIX = 'ExplosionAnimationOf';
 
 enum CandyState {
   NORMAL = 1,
   MOVE = 2,
-  PRECANCEL1 = 3,
-  PRECANCEL2 = 4,
-  CANCEL = 5,
-  CANCELED = 6,
+  CANCELED = 3,
 }
 enum Direction {
   UP,
@@ -101,30 +99,40 @@ export class GameManager extends cc.Component {
   }
 
   private _touchStart(event: cc.EventTouch) {
-    event.getUILocation(this._touchLocation);
+    if (this._isChecking) return;
+    const touch = event.getTouches()[0];
+    touch.getUILocation(this._touchLocation);
     for (let row = 0; row < Constants.BOARD_ROW; row++) {
       for (let col = 0; col < Constants.BOARD_COL; col++) {
         const candy = this._getCandy(row, col);
+        if (candy.state === CandyState.CANCELED) continue;
         if (candy.ins.getComponent(cc.UITransform).getBoundingBoxToWorld().contains(this._touchLocation)) {
           this._isTouching = true;
-          this._targetCandyRC = new cc.Vec2(0, 0);
-          this._targetCandyRC.x = row;
-          this._targetCandyRC.y = col;
-          cc.tween(candy.ins).to(.3, { scale: new cc.Vec3(1.2, 1.2, 0) }, { easing: cc.easing.backInOut }).start();
-          break;
+          if (this._targetCandyRC !== null) {
+            this._processMainLogic(this._targetCandyRC, new cc.Vec2(row, col));
+          } else {
+            this._targetCandyRC = new cc.Vec2(0, 0);
+            this._targetCandyRC.x = row;
+            this._targetCandyRC.y = col;
+            cc.tween(candy.ins)
+              .to(0.3, { scale: new cc.Vec3(1.2, 1.2, 1) }, { easing: cc.easing.backInOut })
+              .start();
+          }
+          return;
         }
       }
     }
   }
 
-  private _touchMove(event: cc.EventTouch) {
+  private async _touchMove(event: cc.EventTouch) {
     if (!this._isTouching) return;
-    const startLocation = event.getStartLocation();
-    const currLocation = event.getLocation();
+    const touch = event.getTouches()[0];
+    const startLocation = touch.getStartLocation();
+    const currLocation = touch.getLocation();
     const distance = cc.Vec2.distance(startLocation, currLocation);
     if (distance > Constants.MIN_TOUCH_MOVE_DISTANCE && !this._isChecking) {
-      this._isChecking = true;
       const direction = this._getTouchDirection(startLocation, currLocation);
+      this._processMainLogic(this._targetCandyRC, null, direction);
     }
   }
 
@@ -132,9 +140,254 @@ export class GameManager extends cc.Component {
     this._isTouching = false;
   }
 
-  private _exchangeCandy(candy1: cc.Vec2, candy2: cc.Vec2) {}
+  private async _processMainLogic(candy1RC: cc.Vec2, candy2RC?: cc.Vec2, direction?: Direction) {
+    this._isChecking = true;
+    // 1. process exchange
+    if (!candy2RC) {
+      const [_, tempCandy2RC] = await this._exchangeCandyByDirection(candy1RC, direction);
+      if (!tempCandy2RC) {
+        this._isChecking = false;
+        return;
+      } else {
+        candy2RC = tempCandy2RC;
+      }
+    } else {
+      const exchangeOk = await this._exchangeCandy(candy1RC, candy2RC);
+      if (!exchangeOk) {
+        await Promise.all([
+          new Promise(resolve =>
+            cc
+              .tween(this._getCandy(candy1RC.x, candy1RC.y).ins)
+              .to(0.3, { scale: new cc.Vec3(1, 1, 1) }, { easing: cc.easing.backInOut })
+              .call(resolve)
+              .start()
+          ),
+          new Promise(resolve =>
+            cc
+              .tween(this._getCandy(candy2RC.x, candy2RC.y).ins)
+              .to(0.3, { scale: new cc.Vec3(1.2, 1.2, 1) }, { easing: cc.easing.backInOut })
+              .call(() => {
+                this._targetCandyRC = candy2RC;
+                resolve(true);
+              })
+              .start()
+          ),
+        ]);
+        this._isChecking = false;
+        return;
+      }
+    }
+    // 2. process match
+    const needCancelCandy = await this._checkMatch(candy1RC, candy2RC);
+    if (needCancelCandy.length === 0) {
+      await this._exchangeCandy(candy1RC, candy2RC);
+      this._isChecking = false;
+      this._targetCandyRC = null;
+      return;
+    }
+    await this._cancelCandy(needCancelCandy);
+    this._isChecking = false;
+    this._targetCandyRC = null;
+  }
 
-  private _exchangeCandyByDirection(candy: cc.Vec2, direction: Direction) {}
+  private async _exchangeCandy(candy1RC: cc.Vec2, candy2RC: cc.Vec2): Promise<boolean> {
+    const { x: r1, y: c1 } = candy1RC;
+    const { x: r2, y: c2 } = candy2RC;
+    if (r1 !== r2 && c1 !== c2) {
+      return false;
+    }
+    if (r1 === r2 && c1 === c2) {
+      return false;
+    }
+    if (r1 === r2 && cc.bits.abs(c1 - c2) > 1) {
+      return false;
+    }
+    if (c1 === c2 && cc.bits.abs(r1 - r2) > 1) {
+      return false;
+    }
+    const candy1 = this._getCandy(r1, c1);
+    const candy2 = this._getCandy(r2, c2);
+    this._candyData[r1][c1] = candy2;
+    this._candyData[r2][c2] = candy1;
+    const exchangePromises = [
+      new Promise(resolve =>
+        cc
+          .tween(candy1.ins)
+          .to(0.1, { position: candy2.ins.position, scale: new cc.Vec3(1, 1, 1) })
+          .call(resolve)
+          .start()
+      ),
+      new Promise(resolve =>
+        cc
+          .tween(candy2.ins)
+          .to(0.1, { position: candy1.ins.position, scale: new cc.Vec3(1, 1, 1) })
+          .call(resolve)
+          .start()
+      ),
+    ];
+    await Promise.all(exchangePromises);
+    return true;
+  }
+
+  private async _exchangeCandyByDirection(candyRC: cc.Vec2, direction: Direction): Promise<cc.Vec2[]> {
+    if (!candyRC) {
+      return [];
+    }
+    let nextCandyRC = null;
+    if (
+      (direction === Direction.UP && candyRC.x > 0) ||
+      (direction === Direction.DOWN && candyRC.x < Constants.BOARD_ROW - 1) ||
+      (direction === Direction.LEFT && candyRC.y > 0) ||
+      (direction === Direction.RIGHT && candyRC.y < Constants.BOARD_COL - 1)
+    ) {
+      nextCandyRC = new cc.Vec2();
+      if (direction === Direction.UP) {
+        nextCandyRC.x = candyRC.x - 1;
+        nextCandyRC.y = candyRC.y;
+      }
+      if (direction === Direction.DOWN) {
+        nextCandyRC.x = candyRC.x + 1;
+        nextCandyRC.y = candyRC.y;
+      }
+      if (direction === Direction.LEFT) {
+        nextCandyRC.x = candyRC.x;
+        nextCandyRC.y = candyRC.y - 1;
+      }
+      if (direction === Direction.RIGHT) {
+        nextCandyRC.x = candyRC.x;
+        nextCandyRC.y = candyRC.y + 1;
+      }
+      await this._exchangeCandy(candyRC, nextCandyRC);
+      return [candyRC, nextCandyRC];
+    } else {
+      return [];
+    }
+  }
+
+  private async _checkMatch(candy1RC?: cc.Vec2, candy2RC?: cc.Vec2) {
+    const needCancelCandy = new Set<string>();
+    if (!candy1RC) {
+      this._checkMatchHrizontal(-1).forEach(needCancelCandy.add, needCancelCandy);
+      this._checkMatchVertical(-1).forEach(needCancelCandy.add, needCancelCandy);
+    } else {
+      if (candy1RC.x === candy2RC.x) {
+        this._checkMatchHrizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchVertical(candy1RC.y).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchVertical(candy2RC.y).forEach(needCancelCandy.add, needCancelCandy);
+      } else {
+        this._checkMatchVertical(candy1RC.y).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchHrizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchHrizontal(candy2RC.x).forEach(needCancelCandy.add, needCancelCandy);
+      }
+    }
+    return [...needCancelCandy].map(pair => new cc.Vec2(...pair.split(',').map(v => parseInt(v))));
+  }
+
+  private async _cancelCandy(candyRCs: cc.Vec2[]) {
+    const cancelAnimationPromises = [];
+    candyRCs.forEach(candyRC => {
+      const p = new Promise(resolve => {
+        const candy = this._getCandy(candyRC.x, candyRC.y);
+        const animation = candy.ins.getComponent(cc.Animation);
+        animation.once(
+          cc.Animation.EventType.FINISHED,
+          () => {
+            candy.ins.destroy();
+            resolve(true);
+          },
+          this
+        );
+        candy.state = CandyState.CANCELED;
+        animation.play(`${EXPLOSION_ANIMATION_NAME_PREFIX}${candy.type}`);
+      });
+      cancelAnimationPromises.push(p);
+    });
+    await Promise.all(cancelAnimationPromises);
+  }
+
+  /**
+   * Find the candy that could be cancel on the special row.
+   * If row === -1, mean should find all of the row.
+   *
+   * @param specialRow need to be checked row, can be -1.
+   * @returns matched(mean need cancel) candy positions, ['r,c','r,c', ...etc]
+   */
+  private _checkMatchHrizontal(specialRow: number): string[] {
+    const result = [];
+    let matchCount = 1;
+    let currentCandyType = '';
+    for (let row = specialRow === -1 ? 0 : specialRow; row < (specialRow === -1 ? Constants.BOARD_ROW : specialRow + 1); row++) {
+      for (let col = 0; col < Constants.BOARD_COL; col++) {
+        if (col === 0) {
+          currentCandyType = this._getCandy(row, col).type;
+        } else {
+          const candy = this._getCandy(row, col);
+          if (candy.type === currentCandyType) {
+            // find match, count it
+            matchCount++;
+          } else {
+            // not match, check prev match info
+            if (matchCount >= 3) {
+              while (matchCount > 0) {
+                result.push(`${row},${col - matchCount}`);
+                matchCount--;
+              }
+            }
+            // If the penultimate candy doesn't match,
+            // then none of the ones following it could possibly match.
+            if (col === Constants.BOARD_COL - 2) {
+              break;
+            }
+            matchCount = 1;
+            currentCandyType = candy.type;
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Find the candy that could be cancel on the special col.
+   * If col === -1, mean should find all of the rol.
+   *
+   * @param col need to be checked col, can be -1.
+   * @returns matched(mean need cancel) candy positions, ['r,c','r,c', ...etc]
+   */
+  private _checkMatchVertical(specialCol: number): string[] {
+    const result = [];
+    let matchCount = 1;
+    let currentCandyType = '';
+    for (let col = specialCol === -1 ? 0 : specialCol; col < (specialCol === -1 ? Constants.BOARD_COL : specialCol + 1); col++) {
+      for (let row = 0; row < Constants.BOARD_ROW; row++) {
+        if (row === 0) {
+          currentCandyType = this._getCandy(row, col).type;
+        } else {
+          const candy = this._getCandy(row, col);
+          if (candy.type === currentCandyType) {
+            // find match, count it
+            matchCount++;
+          } else {
+            // not match, check prev match info
+            if (matchCount >= 3) {
+              while (matchCount > 0) {
+                result.push(`${row - matchCount},${col}`);
+                matchCount--;
+              }
+            }
+            // If the penultimate candy doesn't match,
+            // then none of the ones following it could possibly match.
+            if (row === Constants.BOARD_ROW - 2) {
+              break;
+            }
+            matchCount = 1;
+            currentCandyType = candy.type;
+          }
+        }
+      }
+    }
+    return result;
+  }
 
   private _randomGenerateCandyType(row: number, col: number): string {
     const canUseTypes = this._candyTypes.filter(type => {
