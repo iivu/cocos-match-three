@@ -6,7 +6,6 @@ const EXPLOSION_ANIMATION_NAME_PREFIX = 'ExplosionAnimationOf';
 
 enum CandyState {
   NORMAL = 1,
-  MOVE = 2,
   CANCELED = 3,
 }
 enum Direction {
@@ -72,16 +71,9 @@ export class GameManager extends cc.Component {
   private _initBoard() {
     this._candyData.forEach((row, rowIndex) =>
       row.forEach((candy, colIndex) => {
-        const ins = cc.instantiate(this._candyNameToPrefabMap[candy.type]);
-        const ui = ins.getComponent(cc.UITransform);
-        ui.contentSize = new cc.Size(this._candySize, this._candySize);
-        candy.ins = ins;
-        ins.position = new cc.Vec3(
-          -this._boardWidth / 2 + this._candySize / 2 + colIndex * this._candySize,
-          this._boardHeight / 2 - this._candySize / 2 - rowIndex * this._candySize,
-          0
-        );
-        this.board.addChild(ins);
+        candy.ins = this._instantiateCandy(candy.type);
+        this._placeCandy(rowIndex, colIndex, candy.ins);
+        this.board.addChild(candy.ins);
       })
     );
   }
@@ -178,7 +170,7 @@ export class GameManager extends cc.Component {
       }
     }
     // 2. process match
-    const needCancelCandy = await this._checkMatch(candy1RC, candy2RC);
+    let needCancelCandy = await this._checkMatch(candy1RC, candy2RC);
     if (needCancelCandy.length === 0) {
       await this._exchangeCandy(candy1RC, candy2RC);
       this._isChecking = false;
@@ -186,6 +178,12 @@ export class GameManager extends cc.Component {
       return;
     }
     await this._cancelCandy(needCancelCandy);
+    await this._generateCandy(await this._moveCandy(-1));
+    // 3.loop check
+    while ((needCancelCandy = await this._checkMatch()).length !== 0) {
+      await this._cancelCandy(needCancelCandy);
+      await this._generateCandy(await this._moveCandy(-1));
+    }
     this._isChecking = false;
     this._targetCandyRC = null;
   }
@@ -283,28 +281,6 @@ export class GameManager extends cc.Component {
     return [...needCancelCandy].map(pair => new cc.Vec2(...pair.split(',').map(v => parseInt(v))));
   }
 
-  private async _cancelCandy(candyRCs: cc.Vec2[]) {
-    const cancelAnimationPromises = [];
-    candyRCs.forEach(candyRC => {
-      const p = new Promise(resolve => {
-        const candy = this._getCandy(candyRC.x, candyRC.y);
-        const animation = candy.ins.getComponent(cc.Animation);
-        animation.once(
-          cc.Animation.EventType.FINISHED,
-          () => {
-            candy.ins.destroy();
-            resolve(true);
-          },
-          this
-        );
-        candy.state = CandyState.CANCELED;
-        animation.play(`${EXPLOSION_ANIMATION_NAME_PREFIX}${candy.type}`);
-      });
-      cancelAnimationPromises.push(p);
-    });
-    await Promise.all(cancelAnimationPromises);
-  }
-
   /**
    * Find the candy that could be cancel on the special row.
    * If row === -1, mean should find all of the row.
@@ -316,9 +292,18 @@ export class GameManager extends cc.Component {
     const result = [];
     let matchCount = 1;
     let currentCandyType = '';
+    const processMatch = (row: number, col: number) => {
+      if (matchCount >= 3) {
+        while (matchCount > 0) {
+          result.push(`${row},${col - matchCount}`);
+          matchCount--;
+        }
+      }
+    };
     for (let row = specialRow === -1 ? 0 : specialRow; row < (specialRow === -1 ? Constants.BOARD_ROW : specialRow + 1); row++) {
       for (let col = 0; col < Constants.BOARD_COL; col++) {
         if (col === 0) {
+          matchCount = 1;
           currentCandyType = this._getCandy(row, col).type;
         } else {
           const candy = this._getCandy(row, col);
@@ -327,22 +312,18 @@ export class GameManager extends cc.Component {
             matchCount++;
           } else {
             // not match, check prev match info
-            if (matchCount >= 3) {
-              while (matchCount > 0) {
-                result.push(`${row},${col - matchCount}`);
-                matchCount--;
-              }
-            }
+            processMatch(row, col);
+            matchCount = 1;
+            currentCandyType = candy.type;
             // If the penultimate candy doesn't match,
             // then none of the ones following it could possibly match.
             if (col === Constants.BOARD_COL - 2) {
               break;
             }
-            matchCount = 1;
-            currentCandyType = candy.type;
           }
         }
       }
+      processMatch(row, Constants.BOARD_COL);
     }
     return result;
   }
@@ -358,9 +339,18 @@ export class GameManager extends cc.Component {
     const result = [];
     let matchCount = 1;
     let currentCandyType = '';
+    const processMatch = (row: number, col: number) => {
+      if (matchCount >= 3) {
+        while (matchCount > 0) {
+          result.push(`${row - matchCount},${col}`);
+          matchCount--;
+        }
+      }
+    };
     for (let col = specialCol === -1 ? 0 : specialCol; col < (specialCol === -1 ? Constants.BOARD_COL : specialCol + 1); col++) {
       for (let row = 0; row < Constants.BOARD_ROW; row++) {
         if (row === 0) {
+          matchCount = 1;
           currentCandyType = this._getCandy(row, col).type;
         } else {
           const candy = this._getCandy(row, col);
@@ -369,28 +359,110 @@ export class GameManager extends cc.Component {
             matchCount++;
           } else {
             // not match, check prev match info
-            if (matchCount >= 3) {
-              while (matchCount > 0) {
-                result.push(`${row - matchCount},${col}`);
-                matchCount--;
-              }
-            }
+            processMatch(row, col);
+            matchCount = 1;
+            currentCandyType = candy.type;
             // If the penultimate candy doesn't match,
             // then none of the ones following it could possibly match.
             if (row === Constants.BOARD_ROW - 2) {
               break;
             }
-            matchCount = 1;
-            currentCandyType = candy.type;
           }
         }
       }
+      processMatch(Constants.BOARD_ROW, col);
     }
     return result;
   }
 
-  private _randomGenerateCandyType(row: number, col: number): string {
+  private async _cancelCandy(needCancelCandyRCs: cc.Vec2[]) {
+    const cancelAnimationPromises = [];
+    needCancelCandyRCs.forEach(candyRC => {
+      const p = new Promise(resolve => {
+        const candy = this._getCandy(candyRC.x, candyRC.y);
+        const animation = candy.ins.getComponent(cc.Animation);
+        animation.once(
+          cc.Animation.EventType.FINISHED,
+          () => {
+            candy.ins.active = false;
+            resolve(true);
+          },
+          this
+        );
+        candy.state = CandyState.CANCELED;
+        animation.play(`${EXPLOSION_ANIMATION_NAME_PREFIX}${candy.type}`);
+      });
+      cancelAnimationPromises.push(p);
+    });
+    await Promise.all(cancelAnimationPromises);
+  }
+
+  /**
+   * Move the colum candy
+   *
+   * @param specialCol need to move col, can be -1.
+   */
+  private async _moveCandy(specialCol: number): Promise<cc.Vec2[]> {
+    const needMoveCandy: { candy: CandyData; newPostion: cc.Vec3 }[] = [];
+    const needGenrateCandy: cc.Vec2[] = [];
+    const temp: CandyData[] = [];
+    for (let col = specialCol === -1 ? 0 : specialCol; col < (specialCol === -1 ? Constants.BOARD_COL : specialCol + 1); col++) {
+      let i = 0,
+        j = Constants.BOARD_ROW - 1;
+      for (let row = Constants.BOARD_ROW - 1; row >= 0; row--) {
+        const candy = this._getCandy(row, col);
+        if (candy.state === CandyState.CANCELED) {
+          temp[i] = candy;
+          needGenrateCandy.push(new cc.Vec2(i, col));
+          i++;
+        } else {
+          temp[j] = candy;
+          if (j !== row) {
+            needMoveCandy.push({ candy, newPostion: this._getCandy(j, col).ins.position });
+          }
+          j--;
+        }
+      }
+      temp.forEach((data, index) => (this._candyData[index][col] = data));
+    }
+    await Promise.all(
+      needMoveCandy.map(v => {
+        return new Promise(r => {
+          cc.tween(v.candy.ins).to(0.1, { position: v.newPostion }).call(r).start();
+        });
+      })
+    );
+    return needGenrateCandy;
+  }
+
+  private async _generateCandy(needGenrateCandyRCs: cc.Vec2[]) {
+    const tweenAnimations = [];
+    needGenrateCandyRCs.forEach(rc => {
+      const candy = this._getCandy(rc.x, rc.y);
+      candy.ins.destroy();
+      candy.type = this._randomGenerateCandyType(rc.x, rc.y, true);
+      candy.ins = this._instantiateCandy(candy.type);
+      this._placeCandy(rc.x, rc.y, candy.ins);
+      candy.ins.setScale(0, 0);
+      this.board.addChild(candy.ins);
+      tweenAnimations.push(
+        new Promise(r => {
+          cc.tween(candy.ins)
+            .to(0.3, { scale: new cc.Vec3(1, 1, 0) }, { easing: cc.easing.backInOut })
+            .call(() => {
+              candy.state = CandyState.NORMAL;
+              r(true);
+            })
+            .start();
+        })
+      );
+    });
+    await Promise.all(tweenAnimations);
+  }
+
+  private _randomGenerateCandyType(row: number, col: number, canRepeat = false): string {
     const canUseTypes = this._candyTypes.filter(type => {
+      if (canRepeat) return true;
       let aboveOk = true;
       let leftOk = true;
       if (row > 0) {
@@ -404,6 +476,23 @@ export class GameManager extends cc.Component {
       return aboveOk && leftOk;
     });
     return canUseTypes[cc.randomRangeInt(0, canUseTypes.length)];
+  }
+
+  private _instantiateCandy(type: string): cc.Node {
+    const prefab = this._candyNameToPrefabMap[type];
+    if (!prefab) return null;
+    const ins = cc.instantiate(prefab);
+    const ui = ins.getComponent(cc.UITransform);
+    ui.contentSize = new cc.Size(this._candySize, this._candySize);
+    return ins;
+  }
+
+  private _placeCandy(row: number, col: number, candyNode: cc.Node) {
+    candyNode.position = new cc.Vec3(
+      -this._boardWidth / 2 + this._candySize / 2 + col * this._candySize,
+      this._boardHeight / 2 - this._candySize / 2 - row * this._candySize,
+      0
+    );
   }
 
   private _getCandy(row: number, col: number): CandyData {
