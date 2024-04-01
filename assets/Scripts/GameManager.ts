@@ -265,17 +265,17 @@ export class GameManager extends cc.Component {
   private async _checkMatch(candy1RC?: cc.Vec2, candy2RC?: cc.Vec2) {
     const needCancelCandy = new Set<string>();
     if (!candy1RC) {
-      this._checkMatchHrizontal(-1).forEach(needCancelCandy.add, needCancelCandy);
+      this._checkMatchHorizontal(-1).forEach(needCancelCandy.add, needCancelCandy);
       this._checkMatchVertical(-1).forEach(needCancelCandy.add, needCancelCandy);
     } else {
       if (candy1RC.x === candy2RC.x) {
-        this._checkMatchHrizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchHorizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
         this._checkMatchVertical(candy1RC.y).forEach(needCancelCandy.add, needCancelCandy);
         this._checkMatchVertical(candy2RC.y).forEach(needCancelCandy.add, needCancelCandy);
       } else {
         this._checkMatchVertical(candy1RC.y).forEach(needCancelCandy.add, needCancelCandy);
-        this._checkMatchHrizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
-        this._checkMatchHrizontal(candy2RC.x).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchHorizontal(candy1RC.x).forEach(needCancelCandy.add, needCancelCandy);
+        this._checkMatchHorizontal(candy2RC.x).forEach(needCancelCandy.add, needCancelCandy);
       }
     }
     return [...needCancelCandy].map(pair => new cc.Vec2(...pair.split(',').map(v => parseInt(v))));
@@ -288,7 +288,7 @@ export class GameManager extends cc.Component {
    * @param specialRow need to be checked row, can be -1.
    * @returns matched(mean need cancel) candy positions, ['r,c','r,c', ...etc]
    */
-  private _checkMatchHrizontal(specialRow: number): string[] {
+  private _checkMatchHorizontal(specialRow: number): string[] {
     const result = [];
     let matchCount = 1;
     let currentCandyType = '';
@@ -403,8 +403,8 @@ export class GameManager extends cc.Component {
    * @param specialCol need to move col, can be -1.
    */
   private async _moveCandy(specialCol: number): Promise<cc.Vec2[]> {
-    const needMoveCandy: { candy: CandyData; newPostion: cc.Vec3 }[] = [];
-    const needGenrateCandy: cc.Vec2[] = [];
+    const needMoveCandy: { candy: CandyData; newPosition: cc.Vec3 }[] = [];
+    const needGenerateCandy: cc.Vec2[] = [];
     const temp: CandyData[] = [];
     for (let col = specialCol === -1 ? 0 : specialCol; col < (specialCol === -1 ? Constants.BOARD_COL : specialCol + 1); col++) {
       let i = 0,
@@ -413,12 +413,12 @@ export class GameManager extends cc.Component {
         const candy = this._getCandy(row, col);
         if (candy.state === CandyState.CANCELED) {
           temp[i] = candy;
-          needGenrateCandy.push(new cc.Vec2(i, col));
+          needGenerateCandy.push(new cc.Vec2(i, col));
           i++;
         } else {
           temp[j] = candy;
           if (j !== row) {
-            needMoveCandy.push({ candy, newPostion: this._getCandy(j, col).ins.position });
+            needMoveCandy.push({ candy, newPosition: this._getCandy(j, col).ins.position });
           }
           j--;
         }
@@ -428,16 +428,16 @@ export class GameManager extends cc.Component {
     await Promise.all(
       needMoveCandy.map(v => {
         return new Promise(r => {
-          cc.tween(v.candy.ins).to(0.1, { position: v.newPostion }).call(r).start();
+          cc.tween(v.candy.ins).to(0.1, { position: v.newPosition }).call(r).start();
         });
       })
     );
-    return needGenrateCandy;
+    return needGenerateCandy;
   }
 
-  private async _generateCandy(needGenrateCandyRCs: cc.Vec2[]) {
+  private async _generateCandy(needGenerateCandyRCs: cc.Vec2[]) {
     const tweenAnimations = [];
-    needGenrateCandyRCs.forEach(rc => {
+    needGenerateCandyRCs.forEach(rc => {
       const candy = this._getCandy(rc.x, rc.y);
       candy.ins.destroy();
       candy.type = this._randomGenerateCandyType(rc.x, rc.y, true);
