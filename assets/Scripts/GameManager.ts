@@ -1,5 +1,9 @@
 import * as cc from 'cc';
+
+import * as Types from './Types';
 import * as Constants from './Constants';
+import * as Events from './Events';
+import * as Utils from './Utils';
 
 const { ccclass, property } = cc._decorator;
 const EXPLOSION_ANIMATION_NAME_PREFIX = 'ExplosionAnimationOf';
@@ -7,12 +11,6 @@ const EXPLOSION_ANIMATION_NAME_PREFIX = 'ExplosionAnimationOf';
 enum CandyState {
   NORMAL = 1,
   CANCELED = 3,
-}
-enum Direction {
-  UP,
-  DOWN,
-  LEFT,
-  RIGHT,
 }
 
 type CandyData = { state: CandyState; type: string; ins: cc.Node };
@@ -37,19 +35,16 @@ export class GameManager extends cc.Component {
   private _isTouching = false;
   private _isChecking = false;
   private _touchLocation = new cc.Vec2(0, 0);
-  private _targetCandyRC: cc.Vec2 | null = null;
+  private _targetCandyRC = new cc.Vec2(-1, -1);
 
   protected start() {
     this._initGameData();
     this._initBoard();
-    this._initEvent();
   }
 
   protected update(deltaTime: number) {}
 
-  protected onDestroy(): void {
-    this._offEvent();
-  }
+  protected onDestroy(): void {}
 
   private _initGameData() {
     this._boardWidth = this.board.getComponent(cc.UITransform).contentSize.width;
@@ -76,69 +71,43 @@ export class GameManager extends cc.Component {
         this.board.addChild(candy.ins);
       })
     );
+    this.board.on(Events.EVENT_CANDY_CLICK, (e: Events.CustomEvent<{ node: cc.Node }>) => this._onCandyClick(e.detail.node));
+    this.board.on(Events.EVENT_CANDY_MOVE, (e: Events.CustomEvent<{ node: cc.Node; direction: Types.Direction }>) =>
+      this._onCandyMove(e.detail.node, e.detail.direction)
+    );
   }
 
-  private _initEvent() {
-    cc.input.on(cc.Input.EventType.TOUCH_START, this._touchStart, this);
-    cc.input.on(cc.Input.EventType.TOUCH_MOVE, this._touchMove, this);
-    cc.input.on(cc.Input.EventType.TOUCH_END, this._touchEnd, this);
-  }
-
-  private _offEvent() {
-    cc.input.off(cc.Input.EventType.TOUCH_START, this._touchStart, this);
-    cc.input.off(cc.Input.EventType.TOUCH_MOVE, this._touchMove, this);
-    cc.input.off(cc.Input.EventType.TOUCH_END, this._touchEnd, this);
-  }
-
-  private _touchStart(event: cc.EventTouch) {
+  private _onCandyClick(node: cc.Node) {
     if (this._isChecking) return;
-    const touch = event.getTouches()[0];
-    touch.getUILocation(this._touchLocation);
-    for (let row = 0; row < Constants.BOARD_ROW; row++) {
-      for (let col = 0; col < Constants.BOARD_COL; col++) {
-        const candy = this._getCandy(row, col);
-        if (candy.state === CandyState.CANCELED) continue;
-        if (candy.ins.getComponent(cc.UITransform).getBoundingBoxToWorld().contains(this._touchLocation)) {
-          this._isTouching = true;
-          if (this._targetCandyRC !== null) {
-            this._processMainLogic(this._targetCandyRC, new cc.Vec2(row, col));
-          } else {
-            this._targetCandyRC = new cc.Vec2(0, 0);
-            this._targetCandyRC.x = row;
-            this._targetCandyRC.y = col;
-            cc.tween(candy.ins)
-              .to(0.3, { scale: new cc.Vec3(1.2, 1.2, 1) }, { easing: cc.easing.backInOut })
-              .start();
-          }
-          return;
-        }
-      }
+    const [row, col] = this._getCandyIndexByNode(node);
+    const candy = this._getCandy(row, col);
+    if (candy.state === CandyState.CANCELED) return;
+    if (this._targetCandyRC.x !== -1) {
+      this._processMainLogic(this._targetCandyRC, new cc.Vec2(row, col));
+    } else {
+      this._targetCandyRC.x = row;
+      this._targetCandyRC.y = col;
+      cc.tween(candy.ins)
+        .to(0.3, { scale: new cc.Vec3(1.2, 1.2, 1) }, { easing: cc.easing.backInOut })
+        .start();
     }
   }
 
-  private async _touchMove(event: cc.EventTouch) {
-    if (!this._isTouching) return;
-    const touch = event.getTouches()[0];
-    const startLocation = touch.getStartLocation();
-    const currLocation = touch.getLocation();
-    const distance = cc.Vec2.distance(startLocation, currLocation);
-    if (distance > Constants.MIN_TOUCH_MOVE_DISTANCE && !this._isChecking) {
-      const direction = this._getTouchDirection(startLocation, currLocation);
-      this._processMainLogic(this._targetCandyRC, null, direction);
-    }
+  private _onCandyMove(node: cc.Node, direction: Types.Direction) {
+    if (this._isChecking) return;
+    if (this._targetCandyRC.x === -1) return;
+    const [row, col] = this._getCandyIndexByNode(node);
+    this._processMainLogic(new cc.Vec2(row, col), null, direction);
   }
 
-  private _touchEnd(event: cc.EventTouch) {
-    this._isTouching = false;
-  }
-
-  private async _processMainLogic(candy1RC: cc.Vec2, candy2RC?: cc.Vec2, direction?: Direction) {
+  private async _processMainLogic(candy1RC: cc.Vec2, candy2RC?: cc.Vec2, direction?: Types.Direction) {
     this._isChecking = true;
     // 1. process exchange
     if (!candy2RC) {
       const [_, tempCandy2RC] = await this._exchangeCandyByDirection(candy1RC, direction);
       if (!tempCandy2RC) {
         this._isChecking = false;
+        this._targetCandyRC.x = this._targetCandyRC.y = -1;
         return;
       } else {
         candy2RC = tempCandy2RC;
@@ -159,7 +128,8 @@ export class GameManager extends cc.Component {
               .tween(this._getCandy(candy2RC.x, candy2RC.y).ins)
               .to(0.3, { scale: new cc.Vec3(1.2, 1.2, 1) }, { easing: cc.easing.backInOut })
               .call(() => {
-                this._targetCandyRC = candy2RC;
+                this._targetCandyRC.x = candy2RC.x;
+                this._targetCandyRC.y = candy2RC.y;
                 resolve(true);
               })
               .start()
@@ -174,18 +144,18 @@ export class GameManager extends cc.Component {
     if (needCancelCandy.length === 0) {
       await this._exchangeCandy(candy1RC, candy2RC);
       this._isChecking = false;
-      this._targetCandyRC = null;
+      this._targetCandyRC.x = this._targetCandyRC.y = -1;
       return;
     }
     await this._cancelCandy(needCancelCandy);
     await this._generateCandy(await this._moveCandy(-1));
-    // 3.loop check
+    // 3. loop check
     while ((needCancelCandy = await this._checkMatch()).length !== 0) {
       await this._cancelCandy(needCancelCandy);
       await this._generateCandy(await this._moveCandy(-1));
     }
     this._isChecking = false;
-    this._targetCandyRC = null;
+    this._targetCandyRC.x = this._targetCandyRC.y = -1;
   }
 
   private async _exchangeCandy(candy1RC: cc.Vec2, candy2RC: cc.Vec2): Promise<boolean> {
@@ -227,31 +197,31 @@ export class GameManager extends cc.Component {
     return true;
   }
 
-  private async _exchangeCandyByDirection(candyRC: cc.Vec2, direction: Direction): Promise<cc.Vec2[]> {
+  private async _exchangeCandyByDirection(candyRC: cc.Vec2, direction: Types.Direction): Promise<cc.Vec2[]> {
     if (!candyRC) {
       return [];
     }
     let nextCandyRC = null;
     if (
-      (direction === Direction.UP && candyRC.x > 0) ||
-      (direction === Direction.DOWN && candyRC.x < Constants.BOARD_ROW - 1) ||
-      (direction === Direction.LEFT && candyRC.y > 0) ||
-      (direction === Direction.RIGHT && candyRC.y < Constants.BOARD_COL - 1)
+      (direction === Types.Direction.UP && candyRC.x > 0) ||
+      (direction === Types.Direction.DOWN && candyRC.x < Constants.BOARD_ROW - 1) ||
+      (direction === Types.Direction.LEFT && candyRC.y > 0) ||
+      (direction === Types.Direction.RIGHT && candyRC.y < Constants.BOARD_COL - 1)
     ) {
       nextCandyRC = new cc.Vec2();
-      if (direction === Direction.UP) {
+      if (direction === Types.Direction.UP) {
         nextCandyRC.x = candyRC.x - 1;
         nextCandyRC.y = candyRC.y;
       }
-      if (direction === Direction.DOWN) {
+      if (direction === Types.Direction.DOWN) {
         nextCandyRC.x = candyRC.x + 1;
         nextCandyRC.y = candyRC.y;
       }
-      if (direction === Direction.LEFT) {
+      if (direction === Types.Direction.LEFT) {
         nextCandyRC.x = candyRC.x;
         nextCandyRC.y = candyRC.y - 1;
       }
-      if (direction === Direction.RIGHT) {
+      if (direction === Types.Direction.RIGHT) {
         nextCandyRC.x = candyRC.x;
         nextCandyRC.y = candyRC.y + 1;
       }
@@ -448,7 +418,7 @@ export class GameManager extends cc.Component {
       tweenAnimations.push(
         new Promise(r => {
           cc.tween(candy.ins)
-            .to(0.3, { scale: new cc.Vec3(1, 1, 0) }, { easing: cc.easing.backInOut })
+            .to(0.3, { scale: new cc.Vec3(1, 1, 1) }, { easing: cc.easing.backInOut })
             .call(() => {
               candy.state = CandyState.NORMAL;
               r(true);
@@ -499,15 +469,14 @@ export class GameManager extends cc.Component {
     return this._candyData[row][col];
   }
 
-  private _getTouchDirection(start: cc.Vec2, end: cc.Vec2): Direction {
-    const deltaX = cc.bits.abs(start.x - end.x);
-    const deltaY = cc.bits.abs(start.y - end.y);
-    if (deltaX > deltaY) {
-      if (end.x > start.x) return Direction.RIGHT;
-      else return Direction.LEFT;
-    } else {
-      if (end.y > start.y) return Direction.UP;
-      else return Direction.DOWN;
+  private _getCandyIndexByNode(node: cc.Node): [number, number] {
+    for (let row = 0; row < Constants.BOARD_ROW; ++row) {
+      for (let col = 0; col < Constants.BOARD_COL; ++col) {
+        const candy = this._candyData[row][col];
+        if (candy.ins === node) {
+          return [row, col];
+        }
+      }
     }
   }
 }

@@ -1,7 +1,7 @@
 [
   {
     "__type__": "cc.Prefab",
-    "_name": "Candy_03",
+    "_name": "Candy_07",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_native": "",
@@ -13,7 +13,7 @@
   },
   {
     "__type__": "cc.Node",
-    "_name": "Candy_03",
+    "_name": "Candy_07",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_parent": null,
@@ -116,7 +116,7 @@
       "a": 255
     },
     "_spriteFrame": {
-      "__uuid__": "05b6e53f-5e87-4753-ba77-fcc89e0080f8@f9941",
+      "__uuid__": "0a4bce54-9f13-43a5-9740-55d3cc91a78f@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "_type": 0,
@@ -153,12 +153,12 @@
     "playOnLoad": false,
     "_clips": [
       {
-        "__uuid__": "57dc7e6e-9e4a-4840-afbb-527e5b90a45a",
+        "__uuid__": "cc82a95b-beaf-4ed8-b25f-538f05e88f66",
         "__expectedType__": "cc.AnimationClip"
       }
     ],
     "_defaultClip": {
-      "__uuid__": "57dc7e6e-9e4a-4840-afbb-527e5b90a45a",
+      "__uuid__": "cc82a95b-beaf-4ed8-b25f-538f05e88f66",
       "__expectedType__": "cc.AnimationClip"
     },
     "_id": ""
@@ -183,7 +183,7 @@
   },
   {
     "__type__": "cc.CompPrefabInfo",
-    "fileId": "82la6lX7ZOgZboALMiaM1r"
+    "fileId": "e2sUvMkbBHuI6vI13Ls6fK"
   },
   {
     "__type__": "cc.PrefabInfo",
