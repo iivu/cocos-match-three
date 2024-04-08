@@ -6,7 +6,6 @@ import * as Events from './Events';
 import * as Utils from './Utils';
 
 const { ccclass, property } = cc._decorator;
-const EXPLOSION_ANIMATION_NAME_PREFIX = 'ExplosionAnimationOf';
 
 enum CandyState {
   NORMAL = 1,
@@ -18,7 +17,7 @@ type CandyData = { state: CandyState; type: string; ins: cc.Node };
 @ccclass('GameManager')
 export class GameManager extends cc.Component {
   @property(cc.Node)
-  scoreText: cc.Label = null;
+  scoreText: cc.Node = null;
   @property(cc.Node)
   soundManager: cc.Node = null;
   @property(cc.Node)
@@ -26,6 +25,7 @@ export class GameManager extends cc.Component {
   @property({ type: [cc.Prefab] })
   candyPrefabs: cc.Prefab[] = [];
 
+  private _score = { value: 0, animating: 0 };
   private _boardWidth = 0;
   private _boardHeight = 0;
   private _candySize = 0;
@@ -347,6 +347,7 @@ export class GameManager extends cc.Component {
 
   private async _cancelCandy(needCancelCandyRCs: cc.Vec2[]) {
     const cancelAnimationPromises = [];
+    this._updateScore(needCancelCandyRCs.length * Constants.CANDY_SCORE);
     needCancelCandyRCs.forEach(candyRC => {
       const p = new Promise(resolve => {
         const candy = this._getCandy(candyRC.x, candyRC.y);
@@ -360,7 +361,7 @@ export class GameManager extends cc.Component {
           this
         );
         candy.state = CandyState.CANCELED;
-        animation.play(`${EXPLOSION_ANIMATION_NAME_PREFIX}${candy.type}`);
+        animation.play(`${Constants.EXPLOSION_ANIMATION_NAME_PREFIX}${candy.type}`);
       });
       cancelAnimationPromises.push(p);
     });
@@ -478,5 +479,14 @@ export class GameManager extends cc.Component {
         }
       }
     }
+  }
+
+  private _updateScore(score: number) {
+    this._score.value += score;
+    cc.tween(this._score).to(0.3, { animating: this._score.value }, {
+      onUpdate:(target: any, ratio) => {
+        this.scoreText.getComponent(cc.Label).string = `${Math.floor(target.animating)}`
+      },
+    }).start();
   }
 }
