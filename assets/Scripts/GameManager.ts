@@ -32,9 +32,7 @@ export class GameManager extends cc.Component {
   private _candyData: CandyData[][] = [];
   private _candyNameToPrefabMap: Record<string, cc.Prefab> = {};
   private _candyTypes: string[] = [];
-  private _isTouching = false;
   private _isChecking = false;
-  private _touchLocation = new cc.Vec2(0, 0);
   private _targetCandyRC = new cc.Vec2(-1, -1);
 
   protected start() {
