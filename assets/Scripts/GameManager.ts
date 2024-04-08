@@ -483,10 +483,16 @@ export class GameManager extends cc.Component {
 
   private _updateScore(score: number) {
     this._score.value += score;
-    cc.tween(this._score).to(0.3, { animating: this._score.value }, {
-      onUpdate:(target: any, ratio) => {
-        this.scoreText.getComponent(cc.Label).string = `${Math.floor(target.animating)}`
-      },
-    }).start();
+    cc.tween(this._score)
+      .to(
+        0.3,
+        { animating: this._score.value },
+        {
+          onUpdate: (target: { value: number; animating: number }, ratio) => {
+            this.scoreText.getComponent(cc.Label).string = `${Math.floor(target.animating)}`;
+          },
+        }
+      )
+      .start();
   }
 }
